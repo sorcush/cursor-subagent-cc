@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Mock of `cursor-agent` for unit tests. Mimics verified real behavior:
+#  - prints a single line of result JSON to stdout
+#  - exits 0 on success, 1 on simulated error
+# Test controls (env vars):
+#   MOCK_FAIL_CLI=1       -> print plain-text error, exit 1 (simulates bad model / untrusted)
+#   MOCK_SESSION=<id>     -> session_id to emit (default: sess-mock-1)
+#   MOCK_RESULT=<text>    -> result text to emit (default: "done")
+#   MOCK_LOG=<path>       -> append each invocation's args to this file (for assertions)
+
+set -euo pipefail
+
+if [[ -n "${MOCK_LOG:-}" ]]; then
+  echo "ARGS: $*" >> "$MOCK_LOG"
+fi
+
+if [[ "${MOCK_FAIL_CLI:-0}" == "1" ]]; then
+  echo "Cannot use this model: simulated error." >&2
+  exit 1
+fi
+
+session="${MOCK_SESSION:-sess-mock-1}"
+result="${MOCK_RESULT:-done}"
+
+# Emit verified-shape success JSON on a single line.
+printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":10,"result":"%s","session_id":"%s","request_id":"req-mock","usage":{"inputTokens":1,"outputTokens":1}}\n' \
+  "$result" "$session"
+exit 0
