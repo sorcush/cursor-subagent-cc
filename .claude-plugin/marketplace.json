@@ -1,0 +1,13 @@
+{
+  "name": "cursor-coder-plugin",
+  "owner": {
+    "name": "Andrey Sloutsman"
+  },
+  "plugins": [
+    {
+      "name": "cursor-coder-plugin",
+      "source": "./",
+      "description": "Delegate plan implementation to Cursor's Composer 2.5 via cursor-agent, while Claude/Opus plans and reviews."
+    }
+  ]
+}

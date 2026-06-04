@@ -49,7 +49,35 @@ check "invokes composer-2.5 model" "1" "$(grep -c -- "composer-2.5" "$log")"
 out=$(MOCK_FAIL_CLI=1 bash "$SCRIPT" --task-file "$tf" --verify-cmd "" 2>/dev/null); rc=$?
 check "cli failure status BLOCKED" "BLOCKED" "$(echo "$out" | jq -r .status)"
 check "cli failure exit 1" "1" "$rc"
-rm -f "$tf" "$log"
+
+# CLI failure surfaces stderr diagnostics in verify_output (#2)
+out=$(MOCK_FAIL_CLI=1 MOCK_STDERR="boom: untrusted workspace" bash "$SCRIPT" --task-file "$tf" --verify-cmd "" 2>/dev/null)
+check "cli failure captures stderr" "1" "$([ "$(echo "$out" | jq -r .verify_output | grep -c 'boom: untrusted workspace')" -ge 1 ] && echo 1 || echo 0)"
+
+# is_error:true in JSON -> BLOCKED even though exit 0 and JSON parses (#1)
+out=$(MOCK_IS_ERROR=1 bash "$SCRIPT" --task-file "$tf" --verify-cmd "" 2>/dev/null); rc=$?
+check "is_error JSON status BLOCKED" "BLOCKED" "$(echo "$out" | jq -r .status)"
+check "is_error JSON exit 1" "1" "$rc"
+
+# headless robustness: MCP servers auto-approved so cursor-agent never blocks (#3)
+log=$(mktemp)
+MOCK_LOG="$log" bash "$SCRIPT" --task-file "$tf" --verify-cmd "" >/dev/null 2>&1
+check "invokes with --approve-mcps" "1" "$(grep -c -- "--approve-mcps" "$log")"
+
+# stream-json progress (#5): use stream-json, render progress to stderr,
+# and still parse the terminal result into the single stdout STATUS line.
+log=$(mktemp)
+MOCK_LOG="$log" bash "$SCRIPT" --task-file "$tf" --verify-cmd "" >/dev/null 2>&1
+check "invokes with stream-json output" "1" "$(grep -c -- "--output-format stream-json" "$log")"
+
+errf=$(mktemp)
+out=$(MOCK_STREAM=1 MOCK_SESSION=sess-stream MOCK_RESULT=streamed bash "$SCRIPT" --task-file "$tf" --verify-cmd "" 2>"$errf")
+check "stream: stdout is single JSON line" "1" "$(echo "$out" | wc -l | tr -d ' ')"
+check "stream: status DONE" "DONE" "$(echo "$out" | jq -r .status)"
+check "stream: session captured from result event" "sess-stream" "$(echo "$out" | jq -r .session_id)"
+check "stream: result captured from result event" "streamed" "$(echo "$out" | jq -r .result)"
+check "stream: progress rendered to stderr" "1" "$([ "$(grep -c 'README.md' "$errf")" -ge 1 ] && echo 1 || echo 0)"
+rm -f "$tf" "$log" "$errf"
 
 # --- verify passes first try ---
 tf=$(mktemp); echo "task" > "$tf"

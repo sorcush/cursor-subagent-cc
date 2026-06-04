@@ -34,19 +34,75 @@ if [[ "$VERIFY_CMD_SET" -ne 1 ]]; then
 fi
 
 # --- helper: run cursor-agent once, echo JSON on success, return non-zero on failure ---
+# run_cursor is called in a command substitution (subshell), so it cannot export
+# state via a variable. On failure it writes the real diagnostic (cursor-agent
+# stderr, or the error result) to $ERR_FILE, which the parent reads via cursor_err().
+ERR_FILE=$(mktemp)
+trap 'rm -f "$ERR_FILE"' EXIT
+cursor_err() { cat "$ERR_FILE" 2>/dev/null; }
+
+# Render one stream-json event to stderr as a human-readable progress line.
+render_event() {  # render_event <json-line>
+  local line="$1" type sub
+  type=$(echo "$line" | jq -r '.type // ""' 2>/dev/null) || return 0
+  case "$type" in
+    assistant)
+      local text
+      text=$(echo "$line" | jq -r '.message.content[]? | select(.type=="text") | .text' 2>/dev/null)
+      [[ -n "$text" ]] && echo "  · $text" >&2
+      ;;
+    tool_call)
+      sub=$(echo "$line" | jq -r '.subtype // ""' 2>/dev/null)
+      # Tool name is the KEY inside .tool_call (e.g. readToolCall); path is in its args.
+      local tool path
+      tool=$(echo "$line" | jq -r '.tool_call | keys[0] // "tool"' 2>/dev/null)
+      path=$(echo "$line" | jq -r '.tool_call[]?.args.path // ""' 2>/dev/null)
+      echo "  → ${tool} ${sub}${path:+ ($path)}" >&2
+      ;;
+  esac
+}
+
 run_cursor() {  # run_cursor <prompt> [session_id]
   local prompt="$1" sess="${2:-}"
-  local out
-  if [[ -n "$sess" ]]; then
-    out=$("$CURSOR_BIN" -p --force --trust --output-format json --model "$MODEL" --resume="$sess" "$prompt" 2>/dev/null)
-  else
-    out=$("$CURSOR_BIN" -p --force --trust --output-format json --model "$MODEL" "$prompt" 2>/dev/null)
-  fi
-  local rc=$?
+  local rc result_line="" outfile
+  : > "$ERR_FILE"
+  outfile=$(mktemp)
+  # --approve-mcps: never block on MCP-server approval prompts in headless mode.
+  # stream-json gives per-event progress (rendered to stderr); the terminal
+  # `result` event carries the same shape the rest of the script consumes.
+  local -a cmd=("$CURSOR_BIN" -p --force --trust --approve-mcps
+                --output-format stream-json --model "$MODEL")
+  [[ -n "$sess" ]] && cmd+=(--resume="$sess")
+  cmd+=("$prompt")
+
+  "${cmd[@]}" >"$outfile" 2>"$ERR_FILE"
+  rc=$?
+
+  # Read events line-by-line: render progress to stderr, keep the result event.
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if [[ "$(echo "$line" | jq -r '.type // ""' 2>/dev/null)" == "result" ]]; then
+      result_line="$line"
+    else
+      render_event "$line"
+    fi
+  done < "$outfile"
+  rm -f "$outfile"
+
   if [[ $rc -ne 0 ]]; then return 1; fi
-  # plain-text (non-JSON) output is a failure
-  if ! echo "$out" | jq -e . >/dev/null 2>&1; then return 1; fi
-  echo "$out"
+  # No terminal result event (stream ended early) is a failure.
+  if [[ -z "$result_line" ]] || ! echo "$result_line" | jq -e . >/dev/null 2>&1; then
+    return 1
+  fi
+  # well-formed JSON that reports an error is also a failure (is_error / subtype).
+  local is_err sub
+  is_err=$(echo "$result_line" | jq -r '.is_error // false')
+  sub=$(echo "$result_line" | jq -r '.subtype // ""')
+  if [[ "$is_err" == "true" || ( -n "$sub" && "$sub" != "success" ) ]]; then
+    echo "$result_line" | jq -r '.result // "cursor-agent reported is_error"' > "$ERR_FILE"
+    return 1
+  fi
+  echo "$result_line"
 }
 
 emit() {  # emit <status> <session> <attempts> <verified> <result> <verify_output>
@@ -59,7 +115,7 @@ emit() {  # emit <status> <session> <attempts> <verified> <result> <verify_outpu
 PROMPT="Read the file $TASK_FILE and implement the task it describes. Make all necessary code edits."
 
 CURSOR_OUT=$(run_cursor "$PROMPT" "$SESSION") || {
-  emit "BLOCKED" "$SESSION" 0 false "" "cursor-agent invocation failed"
+  emit "BLOCKED" "$SESSION" 0 false "" "cursor-agent invocation failed: $(cursor_err)"
   exit 1
 }
 
@@ -88,7 +144,7 @@ $verify_out
 
 Fix the code so the verification passes. Make all necessary edits."
   CURSOR_OUT=$(run_cursor "$fix_prompt" "$SESSION_ID") || {
-    emit "BLOCKED" "$SESSION_ID" "$attempts" false "$RESULT_TEXT" "cursor-agent failed during fix attempt $attempts"
+    emit "BLOCKED" "$SESSION_ID" "$attempts" false "$RESULT_TEXT" "cursor-agent failed during fix attempt $attempts: $(cursor_err)"
     exit 1
   }
   SESSION_ID=$(echo "$CURSOR_OUT" | jq -r '.session_id // ""')
