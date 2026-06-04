@@ -29,6 +29,28 @@ out=$(bash "$SCRIPT" --task-file /no/such/file --verify-cmd "" 2>/dev/null); rc=
 check "unreadable task-file exits 2" "2" "$rc"
 rm -f "$tf"
 
+# --- invocation + parse (no verify) ---
+tf=$(mktemp); echo "implement X" > "$tf"
+
+out=$(MOCK_SESSION=sess-42 MOCK_RESULT=builtit bash "$SCRIPT" --task-file "$tf" --verify-cmd "" 2>/dev/null)
+check "no-verify status DONE" "DONE" "$(echo "$out" | jq -r .status)"
+check "session captured" "sess-42" "$(echo "$out" | jq -r .session_id)"
+check "verified false when no verify cmd" "false" "$(echo "$out" | jq -r .verified)"
+check "result captured" "builtit" "$(echo "$out" | jq -r .result)"
+
+# the prompt must instruct Composer to READ the task file (no @file inlining)
+log=$(mktemp)
+MOCK_LOG="$log" bash "$SCRIPT" --task-file "$tf" --verify-cmd "" >/dev/null 2>&1
+check "prompt tells composer to read the file" "1" "$(grep -c -- "$tf" "$log")"
+check "invokes with --trust" "1" "$(grep -c -- "--trust" "$log")"
+check "invokes composer-2.5 model" "1" "$(grep -c -- "composer-2.5" "$log")"
+
+# CLI failure -> BLOCKED
+out=$(MOCK_FAIL_CLI=1 bash "$SCRIPT" --task-file "$tf" --verify-cmd "" 2>/dev/null); rc=$?
+check "cli failure status BLOCKED" "BLOCKED" "$(echo "$out" | jq -r .status)"
+check "cli failure exit 1" "1" "$rc"
+rm -f "$tf" "$log"
+
 echo "---"
 echo "PASS=$PASS FAIL=$FAIL"
 [[ "$FAIL" -eq 0 ]]

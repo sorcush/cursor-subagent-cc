@@ -33,6 +33,45 @@ if [[ "$VERIFY_CMD_SET" -ne 1 ]]; then
   echo "error: --verify-cmd is required (use \"\" for no verification)" >&2; usage; exit 2
 fi
 
-# (invocation + verify loop added in later tasks)
-echo '{"status":"DONE","session_id":"","attempts":0,"verified":false,"result":"","verify_output":""}'
+# --- helper: run cursor-agent once, echo JSON on success, return non-zero on failure ---
+run_cursor() {  # run_cursor <prompt> [session_id]
+  local prompt="$1" sess="${2:-}"
+  local out
+  if [[ -n "$sess" ]]; then
+    out=$("$CURSOR_BIN" -p --force --trust --output-format json --model "$MODEL" --resume="$sess" "$prompt" 2>/dev/null)
+  else
+    out=$("$CURSOR_BIN" -p --force --trust --output-format json --model "$MODEL" "$prompt" 2>/dev/null)
+  fi
+  local rc=$?
+  if [[ $rc -ne 0 ]]; then return 1; fi
+  # plain-text (non-JSON) output is a failure
+  if ! echo "$out" | jq -e . >/dev/null 2>&1; then return 1; fi
+  echo "$out"
+}
+
+emit() {  # emit <status> <session> <attempts> <verified> <result> <verify_output>
+  jq -nc \
+    --arg status "$1" --arg session "$2" --argjson attempts "$3" \
+    --argjson verified "$4" --arg result "$5" --arg vout "$6" \
+    '{status:$status, session_id:$session, attempts:$attempts, verified:$verified, result:$result, verify_output:$vout}'
+}
+
+PROMPT="Read the file $TASK_FILE and implement the task it describes. Make all necessary code edits."
+
+CURSOR_OUT=$(run_cursor "$PROMPT" "$SESSION") || {
+  emit "BLOCKED" "$SESSION" 0 false "" "cursor-agent invocation failed"
+  exit 1
+}
+
+SESSION_ID=$(echo "$CURSOR_OUT" | jq -r '.session_id // ""')
+RESULT_TEXT=$(echo "$CURSOR_OUT" | jq -r '.result // ""')
+
+# No verify command -> trust Composer, report DONE/unverified.
+if [[ -z "$VERIFY_CMD" ]]; then
+  emit "DONE" "$SESSION_ID" 0 false "$RESULT_TEXT" ""
+  exit 0
+fi
+
+# (verify/resume loop added in Task 5)
+emit "DONE" "$SESSION_ID" 0 false "$RESULT_TEXT" ""
 exit 0
