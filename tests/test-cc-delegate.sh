@@ -51,6 +51,35 @@ check "cli failure status BLOCKED" "BLOCKED" "$(echo "$out" | jq -r .status)"
 check "cli failure exit 1" "1" "$rc"
 rm -f "$tf" "$log"
 
+# --- verify passes first try ---
+tf=$(mktemp); echo "task" > "$tf"
+out=$(bash "$SCRIPT" --task-file "$tf" --verify-cmd "true" 2>/dev/null)
+check "verify pass -> DONE" "DONE" "$(echo "$out" | jq -r .status)"
+check "verify pass -> verified true" "true" "$(echo "$out" | jq -r .verified)"
+check "verify pass -> 0 retries" "0" "$(echo "$out" | jq -r .attempts)"
+
+# --- verify always fails -> BLOCKED after max-retries ---
+out=$(bash "$SCRIPT" --task-file "$tf" --verify-cmd "false" --max-retries 2 2>/dev/null); rc=$?
+check "verify always fail -> BLOCKED" "BLOCKED" "$(echo "$out" | jq -r .status)"
+check "verify always fail -> verified false" "false" "$(echo "$out" | jq -r .verified)"
+check "verify always fail -> attempts=2" "2" "$(echo "$out" | jq -r .attempts)"
+check "verify always fail -> exit 1" "1" "$rc"
+
+# --- verify fails twice then passes (stateful) ---
+cnt=$(mktemp); echo 0 > "$cnt"
+# verify cmd: succeed only on the 3rd call
+vcmd="n=\$(cat $cnt); n=\$((n+1)); echo \$n > $cnt; [ \$n -ge 3 ]"
+out=$(bash "$SCRIPT" --task-file "$tf" --verify-cmd "$vcmd" --max-retries 5 2>/dev/null)
+check "eventual pass -> DONE" "DONE" "$(echo "$out" | jq -r .status)"
+check "eventual pass -> verified true" "true" "$(echo "$out" | jq -r .verified)"
+check "eventual pass -> attempts=2" "2" "$(echo "$out" | jq -r .attempts)"
+
+# resume must be used on retry: mock logged at least one --resume call
+log=$(mktemp); echo 0 > "$cnt"
+MOCK_LOG="$log" bash "$SCRIPT" --task-file "$tf" --verify-cmd "$vcmd" --max-retries 5 >/dev/null 2>&1
+check "retry uses --resume" "1" "$([ "$(grep -c -- "--resume" "$log")" -ge 1 ] && echo 1 || echo 0)"
+rm -f "$tf" "$cnt" "$log"
+
 echo "---"
 echo "PASS=$PASS FAIL=$FAIL"
 [[ "$FAIL" -eq 0 ]]

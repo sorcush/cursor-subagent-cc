@@ -72,6 +72,33 @@ if [[ -z "$VERIFY_CMD" ]]; then
   exit 0
 fi
 
-# (verify/resume loop added in Task 5)
-emit "DONE" "$SESSION_ID" 0 false "$RESULT_TEXT" ""
-exit 0
+# Verify, and on failure resume the same session up to MAX_RETRIES times.
+attempts=0
+verify_out=$(eval "$VERIFY_CMD" 2>&1)
+if [[ $? -eq 0 ]]; then
+  emit "DONE" "$SESSION_ID" "$attempts" true "$RESULT_TEXT" "$verify_out"
+  exit 0
+fi
+
+while [[ $attempts -lt $MAX_RETRIES ]]; do
+  attempts=$((attempts+1))
+  fix_prompt="The verification command failed with this output:
+
+$verify_out
+
+Fix the code so the verification passes. Make all necessary edits."
+  CURSOR_OUT=$(run_cursor "$fix_prompt" "$SESSION_ID") || {
+    emit "BLOCKED" "$SESSION_ID" "$attempts" false "$RESULT_TEXT" "cursor-agent failed during fix attempt $attempts"
+    exit 1
+  }
+  SESSION_ID=$(echo "$CURSOR_OUT" | jq -r '.session_id // ""')
+  RESULT_TEXT=$(echo "$CURSOR_OUT" | jq -r '.result // ""')
+  verify_out=$(eval "$VERIFY_CMD" 2>&1)
+  if [[ $? -eq 0 ]]; then
+    emit "DONE" "$SESSION_ID" "$attempts" true "$RESULT_TEXT" "$verify_out"
+    exit 0
+  fi
+done
+
+emit "BLOCKED" "$SESSION_ID" "$attempts" false "$RESULT_TEXT" "$verify_out"
+exit 1
