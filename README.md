@@ -21,12 +21,23 @@ Claude/Opus does the planning and reviewing.
 
 ## Installing
 
-The repo doubles as its own marketplace (`qc-point`):
+This repo also *hosts* a Claude Code marketplace named **`qc-point`** (defined in
+`.claude-plugin/marketplace.json`). Install is two steps — register the
+marketplace by pointing at the repo that contains it, then install the plugin
+from that marketplace:
 
 ```
+# 1. Add the marketplace. The argument is the GitHub repo that HOSTS the
+#    marketplace (owner/repo) — NOT a marketplace or plugin name. Claude Code
+#    reads .claude-plugin/marketplace.json and registers it as "qc-point".
 /plugin marketplace add sorcush/cursor-coder-plugin
+
+# 2. Install the plugin. The form is <plugin-name>@<marketplace-name>.
 /plugin install cursor-coder-plugin@qc-point
 ```
+
+(The repo and the plugin share the name `cursor-coder-plugin`, which is why
+step 1 looks like it takes a plugin name — it doesn't, it takes the repo.)
 
 ## Updating an installed plugin
 
