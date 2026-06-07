@@ -5,7 +5,7 @@ Claude/Opus does the planning and reviewing.
 
 ## Roles
 - **Opus session** — controller + reviewer (plans, extracts tasks, two-stage review)
-- **cursor-coder** (Haiku subagent) — delegator + verifier (shells to Composer, runs tests, loops, commits, reports)
+- **cursor-coder-delegator** (Haiku subagent) — delegator + verifier (shells to Composer, runs tests, loops, commits, reports). Has no code-editing tools — it cannot write code itself.
 - **Composer 2.5** (cursor-agent) — implementer (writes the code)
 
 ## Requirements
