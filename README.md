@@ -50,7 +50,7 @@ plugin from that marketplace:
 # 1. Add the marketplace. The argument is the GitHub repo that HOSTS the marketplace
 #    (owner/repo) — NOT a marketplace or plugin name. Claude Code reads
 #    .claude-plugin/marketplace.json and registers it as "qc-point".
-/plugin marketplace add sorcush/cursor-coder-plugin
+/plugin marketplace add sorcush/cursor-subagent-cc
 
 # 2. Install the plugin. The form is <plugin-name>@<marketplace-name>.
 /plugin install cursor-subagent-cc@qc-point
