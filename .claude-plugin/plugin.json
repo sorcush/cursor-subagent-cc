@@ -1,14 +1,16 @@
 {
-  "name": "cursor-coder-plugin",
-  "description": "Delegate plan implementation to Cursor's Composer 2.5 via cursor-agent, while Claude/Opus plans and reviews.",
-  "version": "0.2.0",
+  "name": "cursor-subagent-cc",
+  "description": "Delegate implementation to Cursor's Composer 2.5 and independent design-spec/plan review to GPT-5.5 (high effort) via cursor-agent, while Claude/Opus plans, decides, and reviews.",
+  "version": "1.0.0",
   "author": {
     "name": "Andrey Sloutsman"
   },
   "keywords": [
     "cursor",
     "composer",
+    "gpt-5.5",
     "delegation",
+    "review",
     "subagent",
     "superpowers"
   ]
