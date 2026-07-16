@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# cr-delegate.sh — delegate ONE design-spec or plan review to GPT-5.5 (high effort)
+# cr-delegate.sh — delegate ONE design-spec or plan review to Grok 4.5 (high effort, fast)
 # via cursor-agent in read-only mode, and return its report.
 # Output discipline: ONLY the final STATUS JSON goes to stdout; diagnostics/progress to stderr.
 set -uo pipefail
 
 CURSOR_BIN="${CR_CURSOR_BIN:-cursor-agent}"
-MODEL="gpt-5.5-high"
+MODEL="cursor-grok-4.5-high-fast"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {

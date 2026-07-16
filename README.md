@@ -5,14 +5,14 @@ in one plugin. Claude/Opus stays the controller; Cursor's `cursor-agent` does th
 work that benefits from a different model:
 
 - **Implementation** is delegated to Cursor's **Composer 2.5**.
-- **Independent review** of a design spec or plan is delegated to **GPT-5.5 (high effort)** —
+- **Independent review** of a design spec or plan is delegated to **Grok 4.5 (high effort, fast)** —
   so the model that authored a doc is never the model that grades it.
 
 ## Subagents & commands
 | Subagent (Haiku) | Command | Delegates to | Role |
 |---|---|---|---|
 | `cursor-coder-delegator` | `/cursor-implement-plans <plan-path>` | Composer 2.5 | Shells to Composer, runs the verify command, loops, commits, reports. No code-editing tools. |
-| `cursor-reviewer-delegator` | `/cursor-review <spec\|plan> <doc-path> [spec-path]` | GPT-5.5 high (read-only) | Runs the review script and relays the report verbatim. Cannot author or judge. |
+| `cursor-reviewer-delegator` | `/cursor-review <spec\|plan> <doc-path> [spec-path]` | Grok 4.5 high fast (read-only) | Runs the review script and relays the report verbatim. Cannot author or judge. |
 
 Opus is the controller for both: it plans/authors, dispatches the subagent, then
 reviews (coder) or triages findings via `superpowers:receiving-code-review` (reviewer).
@@ -29,7 +29,7 @@ reviews (coder) or triages findings via `superpowers:receiving-code-review` (rev
 - New plan, same session: at the superpowers execution handoff, pick subagent-driven and run `/cursor-implement-plans <plan-path>`.
 - Prior plan, new session: `/cursor-implement-plans <plan-path>`.
 
-**Review a spec or plan** (delegates to GPT-5.5):
+**Review a spec or plan** (delegates to Grok 4.5):
 - Spec: `/cursor-review spec docs/superpowers/specs/2026-01-01-foo-design.md`
 - Plan vs spec: `/cursor-review plan docs/superpowers/plans/2026-01-01-foo.md docs/superpowers/specs/2026-01-01-foo-design.md`
 

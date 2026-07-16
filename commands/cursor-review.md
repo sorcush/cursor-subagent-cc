@@ -1,10 +1,10 @@
 ---
-description: Get an independent GPT-5.5 (high effort) review of a design spec or implementation plan, removing the bias of self-review. Usage: /cursor-review <spec|plan> <doc-path> [spec-path]
+description: Get an independent Grok 4.5 (high effort, fast) review of a design spec or implementation plan, removing the bias of self-review. Usage: /cursor-review <spec|plan> <doc-path> [spec-path]
 argument-hint: <spec|plan> <doc-path> [spec-path]
 ---
 
 You are the **controller**. You will obtain an INDEPENDENT review of the document
-named in `$ARGUMENTS` by delegating to GPT-5.5 (high effort) through the
+named in `$ARGUMENTS` by delegating to Grok 4.5 (high effort, fast) through the
 `cursor-reviewer-delegator` subagent. You do NOT review it yourself — that is the
 point: the model that authored the document must not be the one that grades it.
 
@@ -19,7 +19,7 @@ point: the model that authored the document must not be the one that grades it.
 2. **cursor-agent healthy? Probe for real** — `cursor-agent status` is NOT enough. Run
    an actual read-only headless probe:
    ```
-   cursor-agent -p --force --trust --mode ask --model gpt-5.5-high "Reply with the single word READY."
+   cursor-agent -p --force --trust --mode ask --model cursor-grok-4.5-high-fast "Reply with the single word READY."
    ```
    If it does not return `READY` (auth error, "Workspace Trust Required", timeout, or
    anything else), tell the user to run `cursor-agent login` (suggest they type

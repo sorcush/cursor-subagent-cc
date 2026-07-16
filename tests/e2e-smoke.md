@@ -51,10 +51,10 @@ rm -rf "$tmp"
 
 ---
 
-# Reviewer delegation (cr-delegate.sh — GPT-5.5 high)
+# Reviewer delegation (cr-delegate.sh — Grok 4.5 high fast)
 
 Prereqs: `cursor-agent login` done; the probe
-`cursor-agent -p --force --trust --mode ask --model gpt-5.5-high "Reply READY."`
+`cursor-agent -p --force --trust --mode ask --model cursor-grok-4.5-high-fast "Reply READY."`
 returns `READY`.
 
 ## Setup
