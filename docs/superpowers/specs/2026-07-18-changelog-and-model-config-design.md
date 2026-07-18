@@ -139,9 +139,15 @@ New `scripts/gen-changelog.sh`:
    was written. **Section boundary:** the line matching `^## \[X.Y.Z\]`
    through the line immediately before the next line matching `^## \[` (any
    version), or through EOF if there is no next `## [` heading — deletes
-   exactly one section, never touching earlier version entries below it. If
-   no `## [X.Y.Z]` heading exists yet, just prepend, creating the file with
-   the standard header first if it doesn't exist yet.
+   exactly one section, never touching earlier version entries below it.
+   **Insert point:** the new section goes immediately before the first line
+   matching `^## \[` in the file (i.e. above the most recent existing
+   version, below the header/intro blurb) — **not** at byte 0. If the file
+   doesn't exist yet, create it with the standard header block first, then
+   the new section goes immediately after that header. A literal
+   whole-file prepend would place `## [X.Y.Z]` above `# Changelog` itself
+   on every release after the first, which is invalid Keep a Changelog
+   structure.
 4. `git add -A && git commit -m "release: vX.Y.Z"` (unchanged message
    format) — commits the freshly generated/replaced `CHANGELOG.md` section
    together with whatever already-synced docs are sitting in the working
@@ -177,7 +183,12 @@ New `.claude-plugin/models.json`, the single source of truth:
 }
 ```
 
-- `id` — the exact string passed to `cursor-agent --model`.
+- `id` — the exact string passed to `cursor-agent --model`. Constrained to
+  `[A-Za-z0-9._+-]+` (validated alongside the label charset check) — it's
+  shell-interpolated only via quoted `"$MODEL"` so injection isn't the
+  concern, but an id outside this token class would be a sign of a typo'd
+  or malformed value worth catching at validation time rather than at a
+  confusing `cursor-agent` failure downstream.
 - `label` — human-readable name used in prose/docs. Constrained to plain
   ASCII text with no `:`, `"`, backtick, or newline characters, so it can be
   substituted directly into a YAML frontmatter string and a Markdown span
@@ -321,21 +332,32 @@ grep:
   - Usage section: "delegates to Grok 4.5" — same short-form issue,
     normalized to `(delegates to <!-- model:reviewer:label -->Grok 4.5
     (high effort, fast)<!-- /model:reviewer:label -->)`.
-- **`agents/cursor-coder-delegator.md`** / **`agents/cursor-reviewer-delegator.md`**:
-  the body sentence(s) naming the model (e.g. "You hand a single task to
-  Cursor's `<!-- model:coder:label -->Composer 2.5<!-- /model:coder:label -->`
-  model...").
-- **`commands/cursor-implement-plans.md`** / **`commands/cursor-review.md`**:
-  the body prose naming the model (outside the healthcheck probe line, which
-  is already dynamic per the Runtime consumers section above).
+- **`agents/cursor-coder-delegator.md`** line 9: "You hand a single task to
+  Cursor's <!-- model:coder:label -->Composer 2.5<!-- /model:coder:label -->
+  model (via a bundled script)," — marker directly around the span, no
+  surrounding backticks (the current prose doesn't backtick the model name,
+  and adding backticks would make the raw marker comment visible as code).
+- **`agents/cursor-reviewer-delegator.md`** line 9: "You hand one review job
+  to <!-- model:reviewer:label -->Grok 4.5 (high effort, fast)<!--
+  /model:reviewer:label --> via a" — same rule, no backticks.
+- **`commands/cursor-implement-plans.md`** line 7: "delegating each task's
+  implementation to <!-- model:coder:label -->Composer 2.5<!--
+  /model:coder:label --> (through the".
+- **`commands/cursor-review.md`** line 7: "named in `$ARGUMENTS` by
+  delegating to <!-- model:reviewer:label -->Grok 4.5 (high effort,
+  fast)<!-- /model:reviewer:label --> through the".
 - **`scripts/cc-delegate.sh`** / **`scripts/cr-delegate.sh`**: the header
   comment line. **Markers must stay entirely within the `#`-comment line**
   (never span onto a following code line) since these are executable bash
   files, not Markdown — an HTML comment marker landing outside a `#` line
   would be interpreted as a shell command. Single-line example:
   `# cc-delegate.sh — delegate one task to Cursor <!-- model:coder:label -->Composer 2.5<!-- /model:coder:label --> and verify.`
-- **`tests/e2e-smoke.md`**: the comment line's label mention is
-  marker-wrapped like everywhere else. The probe command's model **id** is
+- **`tests/e2e-smoke.md`** line 54: today reads
+  `# Reviewer delegation (cr-delegate.sh — Grok 4.5 high fast)` — another
+  short form. Normalized and marked like the README spots:
+  `# Reviewer delegation (cr-delegate.sh — <!-- model:reviewer:label -->Grok
+  4.5 (high effort, fast)<!-- /model:reviewer:label -->)`. The probe
+  command's model **id** is
   a different case — a marker embedded inside a copy-pasteable shell
   argument would break the runbook (a human pasting `--model <!--
   model:reviewer:id -->...` gets invalid shell, since the marker text isn't
@@ -418,6 +440,18 @@ git diff   # review
   healthcheck's empty-string check with the scripts', and two minor
   clarifications (regex is a grammar spec not a bash snippet; date is
   local, not UTC).
+- 2026-07-18 (round 4): revised after re-review of round 3 (same session).
+  Fixed a critical defect: "prepend" meant literal byte-0 insertion, which
+  would place every release's section above the `# Changelog` header
+  itself — now specified as inserting immediately before the first
+  existing `## [` heading (or after the header block on first run). Also:
+  gave exact wrapped text for the four agent/command body lines and the
+  e2e-smoke.md heading (previously "e.g." examples only), removed
+  backticks around marker examples that would render the raw comment as
+  visible code, added an id charset constraint alongside the label one,
+  and added a drift-coverage test so a hand-reverted dynamic probe (which
+  `sync-models.sh --check` can't see, since those spots aren't
+  regenerated) still fails loudly.
 
 ## Testing
 
@@ -445,6 +479,15 @@ git diff   # review
   override var at a missing/invalid file and assert the script exits
   non-zero with the diagnostic message rather than invoking `cursor-agent`
   with an empty `--model`.
+- New drift-coverage test: since the four dynamic probes (two command
+  healthchecks, the e2e-smoke.md probe, and — already covered above — the
+  two scripts) read `models.json` at run time rather than being
+  regenerated by `sync-models.sh`, a reverted/hand-edited hardcoded
+  `--model <literal>` in one of them would NOT be caught by
+  `sync-models.sh --check`. Add a grep-based check (either its own test or
+  folded into `--check`) asserting each of those four spots' `--model`
+  argument is a variable (`"$CODER_MODEL"` / `"$REVIEWER_MODEL"` /
+  `"$MODEL"`), never a literal string, so drift there fails loudly too.
 - New test for the replace-in-place guard: in a scratch clone, manually
   write a stale/incorrect `## [X.Y.Z]` section into `CHANGELOG.md` for the
   version currently in `plugin.json` (simulating a commit that failed after
