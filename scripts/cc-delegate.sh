@@ -4,7 +4,13 @@
 set -uo pipefail
 
 CURSOR_BIN="${CC_CURSOR_BIN:-cursor-agent}"
-MODEL="composer-2.5"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MODELS_JSON="${CC_MODELS_JSON:-$SCRIPT_DIR/../.claude-plugin/models.json}"
+MODEL="$(jq -r '.coder.id // empty' "$MODELS_JSON" 2>/dev/null)"
+if [[ -z "$MODEL" ]]; then
+  echo "error: could not read .coder.id from $MODELS_JSON" >&2
+  exit 2
+fi
 
 usage() {
   echo "usage: cc-delegate.sh --task-file <path> --verify-cmd <cmd> [--max-retries N] [--session <id>]" >&2

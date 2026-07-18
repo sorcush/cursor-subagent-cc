@@ -17,6 +17,28 @@ check() {  # check <description> <expected> <actual>
   fi
 }
 
+# --- model resolution from models.json ---
+FIXTURE_MODELS=$(mktemp)
+cat > "$FIXTURE_MODELS" <<'EOF'
+{"coder": {"id": "fixture-coder-model", "label": "Fixture Coder"}, "reviewer": {"id": "fixture-reviewer-model", "label": "Fixture Reviewer"}}
+EOF
+
+tf=$(mktemp); echo "do the thing" > "$tf"
+log=$(mktemp)
+CC_MODELS_JSON="$FIXTURE_MODELS" MOCK_LOG="$log" bash "$SCRIPT" --task-file "$tf" --verify-cmd "" >/dev/null 2>&1
+check "reads model id from CC_MODELS_JSON override" "1" "$(grep -c -- "fixture-coder-model" "$log")"
+rm -f "$log"
+
+# missing/invalid models.json -> fail fast, never invoke cursor-agent with empty --model
+out=$(CC_MODELS_JSON=/no/such/file.json bash "$SCRIPT" --task-file "$tf" --verify-cmd "" 2>/dev/null); rc=$?
+check "missing models.json exits non-zero" "1" "$([ "$rc" -ne 0 ] && echo 1 || echo 0)"
+
+BAD_MODELS=$(mktemp); echo '{"coder": {}}' > "$BAD_MODELS"
+out=$(CC_MODELS_JSON="$BAD_MODELS" bash "$SCRIPT" --task-file "$tf" --verify-cmd "" 2>/dev/null); rc=$?
+check "models.json missing .coder.id exits non-zero" "1" "$([ "$rc" -ne 0 ] && echo 1 || echo 0)"
+
+rm -f "$tf" "$FIXTURE_MODELS" "$BAD_MODELS"
+
 # --- arg validation ---
 out=$(bash "$SCRIPT" 2>/dev/null); rc=$?
 check "no args exits 2" "2" "$rc"
