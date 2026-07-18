@@ -775,7 +775,10 @@ cd "$tmp"
 echo "# scratch test" >> README.md
 git add README.md && git commit -q -m "docs: scratch test change"
 jq '.version = "99.0.0"' .claude-plugin/plugin.json > /tmp/pj.json && mv /tmp/pj.json .claude-plugin/plugin.json
-git add .claude-plugin/plugin.json && git commit -q -m "chore: bump for scratch test"
+git add .claude-plugin/plugin.json
+# Deliberately left staged, not committed: make release's first check requires
+# a dirty (uncommitted) tree — committing here would make it clean and the
+# recipe would exit at "nothing to release" before reaching the step under test.
 make release 2>&1 | tail -20
 ```
 
