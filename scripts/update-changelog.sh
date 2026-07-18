@@ -44,11 +44,19 @@ if [[ ! -f "$FILE" ]]; then
 fi
 
 ESC_VERSION="${VERSION//./\\.}"
+TARGET_PATTERN="^## \\[${ESC_VERSION}\\]"
+
+if grep -qE "$TARGET_PATTERN" "$FILE"; then
+  MODE="replace"
+else
+  MODE="insert"
+fi
+
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 
 export SECTION ESC_VERSION
-awk -v version="$ESC_VERSION" '
+awk -v version="$ESC_VERSION" -v mode="$MODE" '
 BEGIN {
   target = "^## \\[" version "\\]"
   inserted = 0
@@ -56,26 +64,32 @@ BEGIN {
   section = ENVIRON["SECTION"]
 }
 {
-  if (!skipping && $0 ~ target) {
-    skipping = 1
-    next
-  }
-  if (skipping) {
-    if ($0 ~ /^## \[/) {
-      skipping = 0
-    } else {
+  if (mode == "replace") {
+    if (!skipping && $0 ~ target) {
+      print section
+      print ""
+      skipping = 1
       next
     }
+    if (skipping) {
+      if ($0 ~ /^## \[/) {
+        skipping = 0
+      } else {
+        next
+      }
+    }
+    print $0
+  } else {
+    if (!inserted && $0 ~ /^## \[/) {
+      print section
+      print ""
+      inserted = 1
+    }
+    print $0
   }
-  if (!inserted && $0 ~ /^## \[/) {
-    print section
-    print ""
-    inserted = 1
-  }
-  print $0
 }
 END {
-  if (!inserted) {
+  if (mode == "insert" && !inserted) {
     print section
   }
 }

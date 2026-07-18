@@ -95,6 +95,13 @@ check "newest untouched" "1" "$(grep -c 'newest' "$f")"
 check "middle replaced" "1" "$(grep -c 'middle, fixed' "$f")"
 check "middle stale text gone" "0" "$(grep -c 'middle, stale' "$f")"
 check "oldest untouched" "1" "$(grep -c 'oldest' "$f")"
+heading_lines=$(grep -n '^## \[' "$f" | cut -d: -f1)
+first_line=$(echo "$heading_lines" | sed -n '1p')
+second_line=$(echo "$heading_lines" | sed -n '2p')
+third_line=$(echo "$heading_lines" | sed -n '3p')
+check "3.0.0 still first heading" "1" "$(sed -n "${first_line}p" "$f" | grep -c '3\.0\.0')"
+check "2.0.0 still second heading" "1" "$(sed -n "${second_line}p" "$f" | grep -c '2\.0\.0')"
+check "1.0.0 still third heading" "1" "$(sed -n "${third_line}p" "$f" | grep -c '1\.0\.0')"
 rm -f "$f"
 
 # --- idempotent: running twice in a row with identical input converges ---
