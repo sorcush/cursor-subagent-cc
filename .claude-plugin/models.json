@@ -1,0 +1,10 @@
+{
+  "coder": {
+    "id": "composer-2.5",
+    "label": "Composer 2.5"
+  },
+  "reviewer": {
+    "id": "cursor-grok-4.5-high-fast",
+    "label": "Grok 4.5 (high effort, fast)"
+  }
+}
