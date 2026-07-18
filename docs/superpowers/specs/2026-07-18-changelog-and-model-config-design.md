@@ -92,7 +92,9 @@ New `scripts/gen-changelog.sh`:
    the boundary is the root of history.
 2. **Collect commits** strictly after the boundary, up to `HEAD`, excluding
    merge commits and any commit itself matching `^release: v`.
-3. **Parse each subject** against
+3. **Parse each subject** against this grammar (a spec, not a literal bash
+   snippet — implement with `sed`/`perl`/`python` or equivalent, not bash's
+   `[[ =~ ]]`, which doesn't support named groups):
    `^(?<type>[a-z]+)(\((?<scope>[^)]+)\))?(?<breaking>!)?:\s*(?<text>.+)$`.
    A subject that doesn't match this shape at all (no `type:` prefix) is
    treated as `type=chore`, `text=<full subject>`. The `scope` group, if
@@ -109,7 +111,9 @@ New `scripts/gen-changelog.sh`:
      major-bump decisions stay a manual maintainer call (see Non-goals).
 5. Each non-empty bucket becomes a `### Added` / `### Changed` / `### Fixed`
    section under a new `## [X.Y.Z] - YYYY-MM-DD` heading, using the version
-   already written to `plugin.json` by the `bump-*` target and today's date.
+   already written to `plugin.json` by the `bump-*` target and today's date
+   (local system date — `date +%F` — matching how the user reasons about
+   "when did I release this," not UTC).
    Empty buckets are omitted. If **all** buckets are empty (no qualifying
    commits since the boundary — e.g. a release re-run with nothing new),
    the section body is a single line, `_No notable changes._`, instead of
@@ -132,8 +136,12 @@ New `scripts/gen-changelog.sh`:
    failed before/during the commit), delete that existing section first,
    then prepend the newly generated one in its place — never skip
    regeneration, since more commits may have landed since the stale section
-   was written. If no such heading exists, just prepend, creating the file
-   with the standard header first if it doesn't exist yet.
+   was written. **Section boundary:** the line matching `^## \[X.Y.Z\]`
+   through the line immediately before the next line matching `^## \[` (any
+   version), or through EOF if there is no next `## [` heading — deletes
+   exactly one section, never touching earlier version entries below it. If
+   no `## [X.Y.Z]` heading exists yet, just prepend, creating the file with
+   the standard header first if it doesn't exist yet.
 4. `git add -A && git commit -m "release: vX.Y.Z"` (unchanged message
    format) — commits the freshly generated/replaced `CHANGELOG.md` section
    together with whatever already-synced docs are sitting in the working
@@ -209,12 +217,16 @@ convenience target that pretty-prints the mapping.
   same way the scripts do (mirrors the fail-fast check above, not a bare
   `jq -r` that could silently pass an empty `--model`):
   ```
-  CODER_MODEL=$(jq -er '.coder.id' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/models.json") \
-    || { echo "error: could not read .coder.id from models.json"; exit 2; }
+  CODER_MODEL=$(jq -er '.coder.id' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/models.json")
+  if [[ -z "$CODER_MODEL" ]]; then
+    echo "error: could not read .coder.id from models.json"; exit 2
+  fi
   cursor-agent -p --force --trust --model "$CODER_MODEL" "Reply with the single word READY."
   ```
-  (`jq -e` makes `jq` itself exit non-zero on `null`/missing, which trips the
-  `||`.)
+  `jq -e` exits non-zero on `null`/missing (which leaves `CODER_MODEL` unset
+  under `set -u`-style callers), and the explicit `-z` check also catches an
+  empty-string value that `-e` alone would miss — the same two-layer check
+  the scripts use.
 - **`commands/cursor-review.md`** healthcheck probe: same pattern reading
   `.reviewer.id`.
 
@@ -250,11 +262,33 @@ untouched):
   read differently today and this spec doesn't force them to converge):
   `"Two Cursor-backed delegation subagents: {coder.label} for implementation
   and {reviewer.label} for independent design/plan review."`
-- **`agents/cursor-coder-delegator.md`** / **`agents/cursor-reviewer-delegator.md`**
-  frontmatter `description:` — regenerated from a per-agent template
-  (script rewrites just that YAML line).
-- **`commands/cursor-implement-plans.md`** / **`commands/cursor-review.md`**
-  frontmatter `description:` — same, per-command template.
+- **`agents/cursor-coder-delegator.md`** frontmatter `description:` —
+  regenerated (only this one YAML line; `name:`, `model:`, `tools:` stay
+  untouched) from: `"Delegates a single implementation task to Cursor's
+  {coder.label} model via cursor-agent, verifies it, and reports back. Use
+  as the implementer in subagent-driven development when delegating coding
+  to Composer. Does not design, review, or write code itself — it delegates
+  and verifies."`
+- **`agents/cursor-reviewer-delegator.md`** frontmatter `description:` —
+  same mechanism, from: `"Delegates an independent design-spec or
+  implementation-plan review to {reviewer.label} via cursor-agent in
+  read-only mode, and relays the report. Use as the reviewer when an
+  independent, unbiased review of a spec or plan is needed. Does not
+  author, judge, or edit — it delegates and relays."`
+- **`commands/cursor-implement-plans.md`** frontmatter `description:` —
+  from: `"Implement a written plan by delegating each task to Cursor's
+  {coder.label} (via the cursor-coder-delegator subagent), while Opus
+  reviews. Usage: /cursor-implement-plans <plan-path>"`
+- **`commands/cursor-review.md`** frontmatter `description:` — from: `"Get
+  an independent {reviewer.label} review of a design spec or implementation
+  plan, removing the bias of self-review. Usage: /cursor-review
+  <spec|plan> <doc-path> [spec-path]"`
+
+  All four templates are the exact current text of each `description:`
+  field with the model name substring replaced by `{coder.label}` /
+  `{reviewer.label}` — i.e. `sync-models.sh` reproduces today's wording
+  verbatim when run against today's `models.json` values, and only the
+  substituted span changes on a model swap.
 
 **Marker-wrapped spans** (for prose embedded inside a document body, where
 only a small span should be rewritten and everything else must survive
@@ -268,8 +302,25 @@ unversioned references to "Composer" or "Cursor" as a product/vendor name
 are left as plain prose, not wrapped, to avoid over-marking every incidental
 mention. Applied to every remaining versioned-model mention found in the
 grep:
-- **`README.md`**: intro paragraph (2 spots), subagents table ("Delegates
-  to" column, 2 spots), usage section heading text.
+- **`README.md`** — five spots, each shown as it will read after sync
+  (bold/table syntax unchanged, only the marked span is new):
+  - Intro line 1: `- **Implementation** is delegated to Cursor's
+    **<!-- model:coder:label -->Composer 2.5<!-- /model:coder:label
+    -->**.`
+  - Intro line 2: `- **Independent review** of a design spec or plan is
+    delegated to **<!-- model:reviewer:label -->Grok 4.5 (high effort,
+    fast)<!-- /model:reviewer:label -->** —`
+  - Table, coder row's "Delegates to" cell: `<!-- model:coder:label
+    -->Composer 2.5<!-- /model:coder:label -->`
+  - Table, reviewer row's "Delegates to" cell: today reads "Grok 4.5 high
+    fast (read-only)" — a short form that doesn't match the canonical
+    label. Normalized to `<!-- model:reviewer:label -->Grok 4.5 (high
+    effort, fast)<!-- /model:reviewer:label --> (read-only)` so the table
+    uses the same label text as everywhere else; `(read-only)` stays
+    outside the marker since it isn't part of the model name.
+  - Usage section: "delegates to Grok 4.5" — same short-form issue,
+    normalized to `(delegates to <!-- model:reviewer:label -->Grok 4.5
+    (high effort, fast)<!-- /model:reviewer:label -->)`.
 - **`agents/cursor-coder-delegator.md`** / **`agents/cursor-reviewer-delegator.md`**:
   the body sentence(s) naming the model (e.g. "You hand a single task to
   Cursor's `<!-- model:coder:label -->Composer 2.5<!-- /model:coder:label -->`
@@ -283,13 +334,22 @@ grep:
   files, not Markdown — an HTML comment marker landing outside a `#` line
   would be interpreted as a shell command. Single-line example:
   `# cc-delegate.sh — delegate one task to Cursor <!-- model:coder:label -->Composer 2.5<!-- /model:coder:label --> and verify.`
-- **`tests/e2e-smoke.md`**: the comment line's label mention, **and** the
-  probe command's model id (e.g.
-  `` `cursor-agent ... --model <!-- model:reviewer:id -->cursor-grok-4.5-high-fast<!-- /model:reviewer:id --> ...` ``)
-  — this is a runbook a human copy-pastes and runs manually, but the id
-  itself is still a real functional value that must not drift, so it's
-  synced like everything else rather than carved out as an exception to the
-  Goals.
+- **`tests/e2e-smoke.md`**: the comment line's label mention is
+  marker-wrapped like everywhere else. The probe command's model **id** is
+  a different case — a marker embedded inside a copy-pasteable shell
+  argument would break the runbook (a human pasting `--model <!--
+  model:reviewer:id -->...` gets invalid shell, since the marker text isn't
+  stripped at use time). Instead, the probe itself becomes a two-line
+  dynamic snippet, matching the pattern already used in the command
+  healthchecks (Runtime consumers, above), so the id is read live and never
+  hardcoded or marker-wrapped at all:
+  ```
+  REVIEWER_MODEL=$(jq -er '.reviewer.id' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/models.json")
+  if [[ -z "$REVIEWER_MODEL" ]]; then
+    echo "error: could not read .reviewer.id from models.json"; exit 2
+  fi
+  cursor-agent -p --force --trust --mode ask --model "$REVIEWER_MODEL" "Reply READY."
+  ```
 
 ### Drift check
 
@@ -302,14 +362,21 @@ silently skipping the file — a missing marker means someone removed it or it
 was never added, either of which needs a human to notice, not a silent
 no-op. This is what `make release` calls before releasing.
 
-**Atomicity:** `sync-models.sh` (no flag) writes each target file to a temp
-path first and only replaces the real file once that file's regeneration
-succeeds — so a mid-run failure (e.g. an invalid label caught by the
-charset check above, partway through the file list) leaves already-written
-files updated and unwritten ones untouched, and the script exits non-zero
-printing exactly which files it did and didn't reach, so a re-run after
-fixing the cause is safe (regeneration is idempotent per-file: re-writing an
-already-correct file is a no-op diff).
+**Validation before any writes:** `sync-models.sh` first reads and validates
+the entire `models.json` — required keys present, `id`s non-empty, `label`s
+pass the charset check — and refuses to run (no files touched at all) if
+validation fails. This is a whole-config check, not per-file, so a bad
+label can never be "caught partway through."
+
+**Atomicity for write failures:** once config is validated, `sync-models.sh`
+writes each target file to a temp path first and only replaces the real
+file once that file's regeneration succeeds — so a failure for an unrelated
+reason (disk full, permission denied, a target file deleted out from under
+it) partway through the file list leaves already-written files updated and
+unwritten ones untouched, and the script exits non-zero printing exactly
+which files it did and didn't reach, so a re-run after fixing the cause is
+safe (regeneration is idempotent per-file: re-writing an already-correct
+file is a no-op diff).
 
 Running `scripts/sync-models.sh` with no flag performs the regeneration for
 real, so the normal workflow after editing `models.json` is:
@@ -338,6 +405,19 @@ git diff   # review
   fixed the Rollout/Doc-consumers contradiction over who edits `keywords`,
   added a label charset constraint, and specified `sync-models.sh`
   per-file write atomicity.
+- 2026-07-18 (round 3): revised after re-review of round 2 (same session).
+  Fixed a self-introduced defect: markers can't be embedded inside a
+  copy-pasteable shell command, so `tests/e2e-smoke.md`'s probe now reads
+  the model id dynamically (same pattern as the command healthchecks)
+  instead of marker-wrapping a literal. Also: defined the exact
+  changelog-section deletion boundary, moved `models.json` validation ahead
+  of all file writes (was ambiguously "mid-run"), added the four
+  frontmatter template strings that were named but not given, spelled out
+  the exact wrapped text for all five README spots (normalizing two
+  short-form model mentions to the canonical label), aligned the command
+  healthcheck's empty-string check with the scripts', and two minor
+  clarifications (regex is a grammar spec not a bash snippet; date is
+  local, not UTC).
 
 ## Testing
 
@@ -349,11 +429,14 @@ git diff   # review
 - New test for `sync-models.sh`: given a sample `models.json`, asserts every
   templated field (`plugin.json` / `marketplace.json` descriptions, all four
   frontmatter `description:` fields) and every marker span (README, agent
-  bodies, command bodies, script header comments, e2e-smoke.md) match
-  expected output; asserts `plugin.json`'s `keywords` is left untouched;
-  asserts `--check` exits 0 on a synced tree, non-zero after mutating
-  `models.json` without re-running sync, and non-zero if a required marker
-  pair is missing from a target file.
+  bodies, command bodies, script header comments, and e2e-smoke.md's
+  comment line — not its probe command, which is never marker-wrapped)
+  match expected output; asserts `plugin.json`'s `keywords` is left
+  untouched; asserts `--check` exits 0 on a synced tree, non-zero after
+  mutating `models.json` without re-running sync, non-zero if a required
+  marker pair is missing from a target file, and non-zero if `models.json`
+  itself fails validation (missing key, empty id, or a label violating the
+  charset constraint) with zero files touched.
 - Extend `tests/test-cc-delegate.sh` / `tests/test-cr-delegate.sh` (or add
   cases) to confirm each script reads `MODEL` from `models.json` rather than
   a hardcoded literal — set `CC_MODELS_JSON` / `CR_MODELS_JSON` to a fixture
@@ -379,9 +462,11 @@ As part of implementing this spec (not deferred):
    `cursor-grok-4.5-high-fast`).
 2. Manually add the marker pairs listed under "Marker-wrapped spans" to
    every body-prose spot in `README.md`, both `agents/*.md`, both
-   `commands/*.md`, both `scripts/*.sh` header comments, and
-   `tests/e2e-smoke.md` (one-time bootstrap — `sync-models.sh` only fills
-   markers in, it doesn't insert new ones into arbitrary prose).
+   `commands/*.md`, both `scripts/*.sh` header comments, and the comment
+   line in `tests/e2e-smoke.md` (one-time bootstrap — `sync-models.sh` only
+   fills markers in, it doesn't insert new ones into arbitrary prose).
+   Separately, replace `tests/e2e-smoke.md`'s probe *command* with the
+   dynamic jq-read snippet given above — that spot takes no marker at all.
 3. Run `sync-models.sh` once to populate every marker and regenerate every
    templated field — this fixes the stale "GPT-5.5" wording in
    `marketplace.json`'s description (via its own template) and every other
