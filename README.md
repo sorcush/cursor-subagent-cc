@@ -81,7 +81,11 @@ make version       # print the current version
 
 ## Tests
 ```
-bash tests/test-cc-delegate.sh     # coder delegate unit tests (mock cursor-agent)
-bash tests/test-cr-delegate.sh     # reviewer delegate unit tests (mock cursor-agent)
+bash tests/test-cc-delegate.sh       # coder delegate unit tests (mock cursor-agent)
+bash tests/test-cr-delegate.sh       # reviewer delegate unit tests (mock cursor-agent)
+bash tests/test-gen-changelog.sh     # changelog section generation from commit history
+bash tests/test-update-changelog.sh  # idempotent changelog file writes
+bash tests/test-sync-models.sh       # models.json -> doc regeneration
+bash tests/test-drift-coverage.sh    # guards the dynamic --model probes
 ```
 See `tests/e2e-smoke.md` for the manual end-to-end checks with a real cursor-agent.
