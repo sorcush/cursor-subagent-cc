@@ -161,16 +161,26 @@ bash "$SCRIPT" --check --repo-dir "$REPO" --models-json "$REPO/.claude-plugin/mo
 check "--check exits non-zero on drift" "1" "$([ "$rc" -ne 0 ] && echo 1 || echo 0)"
 rm -rf "$REPO"
 
-# --- atomicity: a write failure partway through still reports which files it reached ---
+# --- atomicity: a genuine write failure partway through still reports which files it reached ---
 REPO=$(mktemp -d)
 make_fixture_repo "$REPO"
-chmod 444 "$REPO/tests/e2e-smoke.md"  # force a write failure on the LAST file sync touches
+chmod 555 "$REPO/tests"  # genuinely blocks both mktemp-in-dir and mv-into-dir for the LAST file sync touches
 out=$(bash "$SCRIPT" --repo-dir "$REPO" --models-json "$REPO/.claude-plugin/models.json" 2>&1); rc=$?
-check "atomicity: exits non-zero on a write failure" "1" "$([ "$rc" -ne 0 ] && echo 1 || echo 0)"
+check "atomicity: exits non-zero on a genuine write failure" "1" "$([ "$rc" -ne 0 ] && echo 1 || echo 0)"
 check "atomicity: earlier file (plugin.json) was still updated" "1" \
   "$(jq -r '.description' "$REPO/.claude-plugin/plugin.json" | grep -c 'Fixture Coder Label')"
 check "atomicity: reports the unreached file" "1" "$(echo "$out" | grep -c 'not reached:.*e2e-smoke.md')"
-chmod 644 "$REPO/tests/e2e-smoke.md"
+chmod 755 "$REPO/tests"
+rm -rf "$REPO"
+
+# --- validation: non-ASCII label -> refuse ---
+REPO=$(mktemp -d)
+make_fixture_repo "$REPO"
+cat > "$REPO/.claude-plugin/models.json" <<'EOF'
+{"coder": {"id": "fixture-coder", "label": "Café Label"}, "reviewer": {"id": "fixture-reviewer", "label": "Fine Label"}}
+EOF
+bash "$SCRIPT" --repo-dir "$REPO" --models-json "$REPO/.claude-plugin/models.json" 2>/dev/null; rc=$?
+check "non-ASCII label exits non-zero" "1" "$([ "$rc" -ne 0 ] && echo 1 || echo 0)"
 rm -rf "$REPO"
 
 # --- validation: invalid label charset -> refuse, zero files touched ---

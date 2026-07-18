@@ -58,6 +58,7 @@ release:
 	  echo "docs are stale relative to $(MODELS_JSON) — run scripts/sync-models.sh, review the diff, and commit first" >&2; \
 	  exit 1; \
 	}; \
+	set -o pipefail; \
 	scripts/gen-changelog.sh --version "$$ver" | scripts/update-changelog.sh --version "$$ver"; \
 	git add -A; \
 	git commit -m "release: v$$ver"; \

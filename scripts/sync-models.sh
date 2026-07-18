@@ -59,6 +59,9 @@ check_label_charset() {  # check_label_charset <field-name> <value>
   if [[ "$2" == *$'\n'* ]]; then
     echo "error: .$1 contains a newline" >&2; exit 2
   fi
+  if LC_ALL=C printf '%s' "$2" | grep -q '[^ -~]'; then
+    echo "error: .$1 '$2' contains a non-ASCII or non-printable character" >&2; exit 2
+  fi
 }
 check_label_charset "coder.label" "$CODER_LABEL"
 check_label_charset "reviewer.label" "$REVIEWER_LABEL"
@@ -66,28 +69,56 @@ check_label_charset "reviewer.label" "$REVIEWER_LABEL"
 STALE_FILES=()
 TOUCHED_FILES=()
 
+# mktemp_for <file> — sets $TMP_OUT to a temp path in the SAME directory as
+# <file> (so the later mv is a same-filesystem atomic rename, not a
+# cross-fs copy). Called as a plain statement, never via $(...), because it
+# must be able to exit the whole script on failure, not just a subshell.
+mktemp_for() {
+  local file="$1"
+  if ! TMP_OUT="$(mktemp "$(dirname "$file")/.sync-models.XXXXXX" 2>/dev/null)"; then
+    echo "error: could not create a temp file next to $file (directory not writable?)" >&2
+    echo "reached: ${TOUCHED_FILES[*]:-<none>}" >&2
+    echo "not reached: $file and everything after it in the file list" >&2
+    exit 1
+  fi
+}
+
+# atomic_write <file> <tmp> — check mode: diff against tmp, cleanup, record
+# staleness. Write mode: mv with failure handling (cleanup tmp on failure,
+# report reached/not-reached, exit non-zero; record success in TOUCHED_FILES).
+atomic_write() {
+  local file="$1" tmp="$2"
+  if [[ "$CHECK" -eq 1 ]]; then
+    if ! diff -q "$file" "$tmp" >/dev/null 2>&1; then STALE_FILES+=("$file"); fi
+    rm -f "$tmp"
+    return 0
+  fi
+  if ! mv "$tmp" "$file" 2>/dev/null; then
+    rm -f "$tmp"
+    echo "error: failed to write $file" >&2
+    echo "reached: ${TOUCHED_FILES[*]:-<none>}" >&2
+    echo "not reached: $file and everything after it in the file list" >&2
+    exit 1
+  fi
+  TOUCHED_FILES+=("$file")
+}
+
 # regen_json_field_arg <file> <jq-path-expr-using-$d> <value>
 regen_json_field_arg() {
   local file="$1" expr="$2" value="$3"
   [[ ! -f "$file" ]] && { echo "error: expected file missing: $file" >&2; exit 2; }
-  local tmp; tmp="$(mktemp)"
+  mktemp_for "$file"; local tmp="$TMP_OUT"
   if ! jq --arg d "$value" "$expr" "$file" > "$tmp"; then
     rm -f "$tmp"; echo "error: jq failed regenerating $file" >&2; exit 2
   fi
-  if [[ "$CHECK" -eq 1 ]]; then
-    if ! diff -q "$file" "$tmp" >/dev/null 2>&1; then STALE_FILES+=("$file"); fi
-    rm -f "$tmp"
-  else
-    mv "$tmp" "$file"
-    TOUCHED_FILES+=("$file")
-  fi
+  atomic_write "$file" "$tmp"
 }
 
 # regen_frontmatter_description <file> <new-description-text>
 regen_frontmatter_description() {
   local file="$1" new="$2"
   [[ ! -f "$file" ]] && { echo "error: expected file missing: $file" >&2; exit 2; }
-  local tmp; tmp="$(mktemp)"
+  mktemp_for "$file"; local tmp="$TMP_OUT"
   NEW_LINE="description: $new" awk '
     BEGIN { done = 0 }
     {
@@ -99,13 +130,25 @@ regen_frontmatter_description() {
       }
     }
   ' "$file" > "$tmp"
-  if [[ "$CHECK" -eq 1 ]]; then
-    if ! diff -q "$file" "$tmp" >/dev/null 2>&1; then STALE_FILES+=("$file"); fi
-    rm -f "$tmp"
-  else
-    mv "$tmp" "$file"
-    TOUCHED_FILES+=("$file")
+  atomic_write "$file" "$tmp"
+}
+
+# regen_markers <file> <which: coder|reviewer>
+regen_markers() {
+  local file="$1" which="$2" value tag
+  [[ ! -f "$file" ]] && { echo "error: expected file missing: $file" >&2; exit 2; }
+  if [[ "$which" == "coder" ]]; then value="$CODER_LABEL"; else value="$REVIEWER_LABEL"; fi
+  tag="model:$which:label"
+  if ! grep -q -- "<!-- $tag -->" "$file"; then
+    echo "error: required marker <!-- $tag --> missing from $file" >&2
+    exit 1
   fi
+  mktemp_for "$file"; local tmp="$TMP_OUT"
+  NEW_VALUE="$value" TAG="$tag" perl -0777 -pe '
+    my $val = $ENV{NEW_VALUE};
+    s/(<!-- \Q$ENV{TAG}\E -->).*?(<!-- \/\Q$ENV{TAG}\E -->)/$1 . $val . $2/ges;
+  ' "$file" > "$tmp"
+  atomic_write "$file" "$tmp"
 }
 
 # --- plugin.json / marketplace.json descriptions (keywords is never touched) ---
@@ -141,53 +184,10 @@ MARKER_TARGETS=(
   "$REPO_DIR/tests/e2e-smoke.md:reviewer"
 )
 
-# regen_markers <file> <which: coder|reviewer>
-regen_markers() {
-  local file="$1" which="$2" value tag
-  [[ ! -f "$file" ]] && { echo "error: expected file missing: $file" >&2; exit 2; }
-  if [[ "$which" == "coder" ]]; then value="$CODER_LABEL"; else value="$REVIEWER_LABEL"; fi
-  tag="model:$which:label"
-  if ! grep -q -- "<!-- $tag -->" "$file"; then
-    echo "error: required marker <!-- $tag --> missing from $file" >&2
-    exit 1
-  fi
-  local tmp; tmp="$(mktemp)"
-  NEW_VALUE="$value" TAG="$tag" perl -0777 -pe '
-    my $val = $ENV{NEW_VALUE};
-    s/(<!-- \Q$ENV{TAG}\E -->).*?(<!-- \/\Q$ENV{TAG}\E -->)/$1 . $val . $2/ges;
-  ' "$file" > "$tmp"
-  if [[ "$CHECK" -eq 1 ]]; then
-    if ! diff -q "$file" "$tmp" >/dev/null 2>&1; then STALE_FILES+=("$file"); fi
-    rm -f "$tmp"
-  else
-    if ! mv "$tmp" "$file"; then
-      echo "error: failed to write $file" >&2
-      echo "reached: ${TOUCHED_FILES[*]:-<none>}" >&2
-      echo "not reached: $file and everything after it in the file list" >&2
-      exit 1
-    fi
-    TOUCHED_FILES+=("$file")
-  fi
-}
-
 for entry in "${MARKER_TARGETS[@]}"; do
   file="${entry%%:*}"
   which="${entry##*:}"
-  if [[ "$CHECK" -eq 1 ]]; then
-    regen_markers "$file" "$which" || exit 1
-  else
-    # A permission-denied target can't be created as a temp+rename target in
-    # the same directory in every environment, so simulate "can't write" by
-    # checking writability up front and failing the same way a real I/O
-    # error would, reporting progress so far.
-    if [[ ! -w "$file" ]]; then
-      echo "error: cannot write $file (permission denied or read-only)" >&2
-      echo "reached: ${TOUCHED_FILES[*]:-<none>}" >&2
-      echo "not reached: $file" >&2
-      exit 1
-    fi
-    regen_markers "$file" "$which"
-  fi
+  regen_markers "$file" "$which"
 done
 
 if [[ "$CHECK" -eq 1 && ${#STALE_FILES[@]} -gt 0 ]]; then
