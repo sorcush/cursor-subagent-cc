@@ -5,8 +5,13 @@
 set -uo pipefail
 
 CURSOR_BIN="${CR_CURSOR_BIN:-cursor-agent}"
-MODEL="cursor-grok-4.5-high-fast"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MODELS_JSON="${CR_MODELS_JSON:-$SCRIPT_DIR/../.claude-plugin/models.json}"
+MODEL="$(jq -r '.reviewer.id // empty' "$MODELS_JSON" 2>/dev/null)"
+if [[ -z "$MODEL" ]]; then
+  echo "error: could not read .reviewer.id from $MODELS_JSON" >&2
+  exit 2
+fi
 
 usage() {
   echo "usage: cr-delegate.sh --target spec|plan --doc-file <path> [--spec-file <path>] [--lenses backend,frontend,ui] [--rubric-dir <path>] [--session <id>]" >&2

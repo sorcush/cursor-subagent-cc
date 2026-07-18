@@ -31,6 +31,27 @@ echo "OUTPUT_FORMAT_SENTINEL" > "$RUBRICS/_output-format.md"
 
 doc=$(mktemp); echo "# Some Spec" > "$doc"
 
+# --- model resolution from models.json ---
+FIXTURE_MODELS=$(mktemp)
+cat > "$FIXTURE_MODELS" <<'EOF'
+{"coder": {"id": "fixture-coder-model", "label": "Fixture Coder"}, "reviewer": {"id": "fixture-reviewer-model", "label": "Fixture Reviewer"}}
+EOF
+
+log=$(mktemp)
+CR_MODELS_JSON="$FIXTURE_MODELS" MOCK_LOG="$log" bash "$SCRIPT" \
+  --target spec --doc-file "$doc" --rubric-dir "$RUBRICS" >/dev/null 2>&1
+has "reads model id from CR_MODELS_JSON override" "fixture-reviewer-model" "$log"
+rm -f "$log"
+
+out=$(CR_MODELS_JSON=/no/such/file.json bash "$SCRIPT" --target spec --doc-file "$doc" --rubric-dir "$RUBRICS" 2>/dev/null); rc=$?
+check "missing models.json exits non-zero" "1" "$([ "$rc" -ne 0 ] && echo 1 || echo 0)"
+
+BAD_MODELS=$(mktemp); echo '{"reviewer": {}}' > "$BAD_MODELS"
+out=$(CR_MODELS_JSON="$BAD_MODELS" bash "$SCRIPT" --target spec --doc-file "$doc" --rubric-dir "$RUBRICS" 2>/dev/null); rc=$?
+check "models.json missing .reviewer.id exits non-zero" "1" "$([ "$rc" -ne 0 ] && echo 1 || echo 0)"
+
+rm -f "$FIXTURE_MODELS" "$BAD_MODELS"
+
 # --- arg validation ---
 out=$(bash "$SCRIPT" 2>/dev/null); rc=$?
 check "no args exits 2" "2" "$rc"
