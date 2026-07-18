@@ -51,11 +51,16 @@ rm -rf "$tmp"
 
 ---
 
-# Reviewer delegation (cr-delegate.sh — Grok 4.5 high fast)
+# Reviewer delegation (cr-delegate.sh — <!-- model:reviewer:label -->Grok 4.5 (high effort, fast)<!-- /model:reviewer:label -->)
 
-Prereqs: `cursor-agent login` done; the probe
-`cursor-agent -p --force --trust --mode ask --model cursor-grok-4.5-high-fast "Reply READY."`
-returns `READY`.
+Prereqs: `cursor-agent login` done; the probe below returns `READY`:
+```bash
+REVIEWER_MODEL=$(jq -er '.reviewer.id' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/models.json")
+if [[ -z "$REVIEWER_MODEL" ]]; then
+  echo "error: could not read .reviewer.id from models.json"; exit 2
+fi
+cursor-agent -p --force --trust --mode ask --model "$REVIEWER_MODEL" "Reply READY."
+```
 
 ## Setup
 ```bash

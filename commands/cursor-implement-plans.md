@@ -4,7 +4,7 @@ argument-hint: <path-to-plan-file>
 ---
 
 You are the **controller**. You will implement the plan at `$ARGUMENTS` by
-delegating each task's implementation to Composer 2.5 (through the
+delegating each task's implementation to <!-- model:coder:label -->Composer 2.5<!-- /model:coder:label --> (through the
 `cursor-coder-delegator` subagent) while YOU do the planning extraction and all
 review. Composer writes code; you never let it review.
 
@@ -17,7 +17,11 @@ review. Composer writes code; you never let it review.
    calls still fail auth, and it does not catch the workspace-trust gate. Run an
    actual headless probe instead:
    ```
-   cursor-agent -p --force --trust --model composer-2.5 "Reply with the single word READY."
+   CODER_MODEL=$(jq -er '.coder.id' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/models.json")
+   if [[ -z "$CODER_MODEL" ]]; then
+     echo "error: could not read .coder.id from models.json"; exit 2
+   fi
+   cursor-agent -p --force --trust --model "$CODER_MODEL" "Reply with the single word READY."
    ```
    - If it does not return `READY` — auth error ("Authentication required"),
      "Workspace Trust Required", a timeout, or anything else — the setup is NOT

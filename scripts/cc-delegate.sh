@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cc-delegate.sh — delegate one task to Cursor Composer 2.5 and verify.
+# cc-delegate.sh — delegate one task to Cursor <!-- model:coder:label -->Composer 2.5<!-- /model:coder:label --> and verify.
 # Output discipline: ONLY the final STATUS JSON goes to stdout; diagnostics to stderr.
 set -uo pipefail
 

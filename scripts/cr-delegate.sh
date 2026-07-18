@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cr-delegate.sh — delegate ONE design-spec or plan review to Grok 4.5 (high effort, fast)
+# cr-delegate.sh — delegate ONE design-spec or plan review to <!-- model:reviewer:label -->Grok 4.5 (high effort, fast)<!-- /model:reviewer:label -->
 # via cursor-agent in read-only mode, and return its report.
 # Output discipline: ONLY the final STATUS JSON goes to stdout; diagnostics/progress to stderr.
 set -uo pipefail

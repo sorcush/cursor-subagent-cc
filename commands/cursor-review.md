@@ -4,7 +4,7 @@ argument-hint: <spec|plan> <doc-path> [spec-path]
 ---
 
 You are the **controller**. You will obtain an INDEPENDENT review of the document
-named in `$ARGUMENTS` by delegating to Grok 4.5 (high effort, fast) through the
+named in `$ARGUMENTS` by delegating to <!-- model:reviewer:label -->Grok 4.5 (high effort, fast)<!-- /model:reviewer:label --> through the
 `cursor-reviewer-delegator` subagent. You do NOT review it yourself — that is the
 point: the model that authored the document must not be the one that grades it.
 
@@ -19,7 +19,11 @@ point: the model that authored the document must not be the one that grades it.
 2. **cursor-agent healthy? Probe for real** — `cursor-agent status` is NOT enough. Run
    an actual read-only headless probe:
    ```
-   cursor-agent -p --force --trust --mode ask --model cursor-grok-4.5-high-fast "Reply with the single word READY."
+   REVIEWER_MODEL=$(jq -er '.reviewer.id' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/models.json")
+   if [[ -z "$REVIEWER_MODEL" ]]; then
+     echo "error: could not read .reviewer.id from models.json"; exit 2
+   fi
+   cursor-agent -p --force --trust --mode ask --model "$REVIEWER_MODEL" "Reply with the single word READY."
    ```
    If it does not return `READY` (auth error, "Workspace Trust Required", timeout, or
    anything else), tell the user to run `cursor-agent login` (suggest they type
