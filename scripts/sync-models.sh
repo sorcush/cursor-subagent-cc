@@ -126,6 +126,70 @@ regen_frontmatter_description "$REPO_DIR/agents/cursor-reviewer-delegator.md" "$
 regen_frontmatter_description "$REPO_DIR/commands/cursor-implement-plans.md" "$CODER_CMD_DESC"
 regen_frontmatter_description "$REPO_DIR/commands/cursor-review.md" "$REVIEWER_CMD_DESC"
 
+# --- marker-wrapped spans ---
+# file:tag pairs this repo requires. Extend this list if a new file gains a
+# marker (see the spec's Rollout section for the authoritative inventory).
+MARKER_TARGETS=(
+  "$REPO_DIR/README.md:coder"
+  "$REPO_DIR/README.md:reviewer"
+  "$REPO_DIR/agents/cursor-coder-delegator.md:coder"
+  "$REPO_DIR/agents/cursor-reviewer-delegator.md:reviewer"
+  "$REPO_DIR/commands/cursor-implement-plans.md:coder"
+  "$REPO_DIR/commands/cursor-review.md:reviewer"
+  "$REPO_DIR/scripts/cc-delegate.sh:coder"
+  "$REPO_DIR/scripts/cr-delegate.sh:reviewer"
+  "$REPO_DIR/tests/e2e-smoke.md:reviewer"
+)
+
+# regen_markers <file> <which: coder|reviewer>
+regen_markers() {
+  local file="$1" which="$2" value tag
+  [[ ! -f "$file" ]] && { echo "error: expected file missing: $file" >&2; exit 2; }
+  if [[ "$which" == "coder" ]]; then value="$CODER_LABEL"; else value="$REVIEWER_LABEL"; fi
+  tag="model:$which:label"
+  if ! grep -q -- "<!-- $tag -->" "$file"; then
+    echo "error: required marker <!-- $tag --> missing from $file" >&2
+    exit 1
+  fi
+  local tmp; tmp="$(mktemp)"
+  NEW_VALUE="$value" TAG="$tag" perl -0777 -pe '
+    my $val = $ENV{NEW_VALUE};
+    s/(<!-- \Q$ENV{TAG}\E -->).*?(<!-- \/\Q$ENV{TAG}\E -->)/$1 . $val . $2/ges;
+  ' "$file" > "$tmp"
+  if [[ "$CHECK" -eq 1 ]]; then
+    if ! diff -q "$file" "$tmp" >/dev/null 2>&1; then STALE_FILES+=("$file"); fi
+    rm -f "$tmp"
+  else
+    if ! mv "$tmp" "$file"; then
+      echo "error: failed to write $file" >&2
+      echo "reached: ${TOUCHED_FILES[*]:-<none>}" >&2
+      echo "not reached: $file and everything after it in the file list" >&2
+      exit 1
+    fi
+    TOUCHED_FILES+=("$file")
+  fi
+}
+
+for entry in "${MARKER_TARGETS[@]}"; do
+  file="${entry%%:*}"
+  which="${entry##*:}"
+  if [[ "$CHECK" -eq 1 ]]; then
+    regen_markers "$file" "$which" || exit 1
+  else
+    # A permission-denied target can't be created as a temp+rename target in
+    # the same directory in every environment, so simulate "can't write" by
+    # checking writability up front and failing the same way a real I/O
+    # error would, reporting progress so far.
+    if [[ ! -w "$file" ]]; then
+      echo "error: cannot write $file (permission denied or read-only)" >&2
+      echo "reached: ${TOUCHED_FILES[*]:-<none>}" >&2
+      echo "not reached: $file" >&2
+      exit 1
+    fi
+    regen_markers "$file" "$which"
+  fi
+done
+
 if [[ "$CHECK" -eq 1 && ${#STALE_FILES[@]} -gt 0 ]]; then
   echo "stale (would change on sync):" >&2
   printf '  %s\n' "${STALE_FILES[@]}" >&2
