@@ -51,6 +51,9 @@ Two separate gaps:
   starts fresh from the next release.
 - No changelog editing UI/prompt step — generation is fully automatic from
   conventional-commit prefixes, per the user's explicit choice.
+- No automatic SemVer bump selection from `!:`/`BREAKING` commits — which
+  `bump-*` target to run stays a manual maintainer decision; the changelog's
+  `**BREAKING:**` annotation is informational only (see Part 1 step 4).
 
 ## Part 1 — Changelog
 
@@ -77,8 +80,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - fix marketplace add command to use renamed repo
-
-## [1.1.0] - ...
 ```
 
 ### Generation
@@ -114,10 +115,9 @@ New `scripts/gen-changelog.sh`:
    the section body is a single line, `_No notable changes._`, instead of
    any subsection headings.
 6. Prints the new section to stdout; does not touch the file itself (keeps
-   the script composable/testable).
-7. **Idempotent by construction:** because step 5 always uses the version
-   currently in `plugin.json`, re-running the script produces the same
-   section for the same version regardless of how many times it's called.
+   the script composable/testable), so re-running it always recomputes the
+   section fresh from current git history and the current `plugin.json`
+   version — it never reads or depends on what's already in `CHANGELOG.md`.
 
 ### Wiring into `make release`
 
@@ -125,22 +125,30 @@ New `scripts/gen-changelog.sh`:
 1. Run the existing dirty-tree-required check (unchanged).
 2. Run `scripts/sync-models.sh --check` (see Part 2) — abort with a clear
    message if docs are stale.
-3. Run `scripts/gen-changelog.sh` to get the new section text. **Idempotency
-   guard:** if `CHANGELOG.md` already contains a `## [X.Y.Z]` heading for the
-   version currently in `plugin.json`, skip this step entirely (a prior run
-   already wrote it — e.g. the release commit failed after this step but
-   before the git commit succeeded, and `make release` was re-run). Otherwise
-   prepend the generated section to `CHANGELOG.md`, creating the file with
-   the standard header first if it doesn't exist yet.
+3. Run `scripts/gen-changelog.sh` to get the freshly-generated section text
+   for the version currently in `plugin.json`. **Idempotency by
+   replace-in-place:** if `CHANGELOG.md` already contains a `## [X.Y.Z]`
+   heading for that version (from a prior run that generated the section but
+   failed before/during the commit), delete that existing section first,
+   then prepend the newly generated one in its place — never skip
+   regeneration, since more commits may have landed since the stale section
+   was written. If no such heading exists, just prepend, creating the file
+   with the standard header first if it doesn't exist yet.
 4. `git add -A && git commit -m "release: vX.Y.Z"` (unchanged message
-   format) — now also includes `CHANGELOG.md` and any docs `sync-models.sh`
-   regenerated.
+   format) — commits the freshly generated/replaced `CHANGELOG.md` section
+   together with whatever already-synced docs are sitting in the working
+   tree (`sync-models.sh` itself was run manually beforehand per its own
+   workflow; step 2 here only verifies that was done, it does not run sync).
 5. `git push` (unchanged).
 
-This makes the whole `make release` sequence safe to re-run after any step
-fails: step 2 is naturally idempotent (drift-check), step 3 is guarded
-explicitly, and step 4 only commits if there's something to commit (existing
-behavior).
+Steps 1–4 are safe to re-run after a failure in any of them: step 1 requires
+a dirty tree so a fully-clean state (nothing pending) correctly refuses;
+step 2 is a pure drift check; step 3 always regenerates fresh and replaces
+rather than skips; step 4 only commits what's actually changed. **Step 5 is
+the one exception:** if `git push` itself fails after a successful commit,
+the tree is now clean, so re-running `make release` will correctly refuse
+with "nothing to release" — recovery in that case is simply running
+`git push` directly, not `make release` again.
 
 ## Part 2 — Per-agent model config
 
@@ -162,7 +170,12 @@ New `.claude-plugin/models.json`, the single source of truth:
 ```
 
 - `id` — the exact string passed to `cursor-agent --model`.
-- `label` — human-readable name used in prose/docs.
+- `label` — human-readable name used in prose/docs. Constrained to plain
+  ASCII text with no `:`, `"`, backtick, or newline characters, so it can be
+  substituted directly into a YAML frontmatter string and a Markdown span
+  without escaping logic in `sync-models.sh`. `sync-models.sh` validates this
+  and refuses to run if a label violates it, rather than emitting broken
+  YAML/JSON.
 
 To change a model, edit this file directly. To see the current mapping, read
 it directly (`jq . .claude-plugin/models.json`) or run `make models`, a new
@@ -192,11 +205,16 @@ convenience target that pretty-prints the mapping.
   check.
 - **`commands/cursor-implement-plans.md`** healthcheck probe (step 2):
   replace the hardcoded `--model composer-2.5` literal with an instruction to
-  read `.claude-plugin/models.json`'s `.coder.id` first, e.g.:
+  read `.claude-plugin/models.json`'s `.coder.id` first, failing fast the
+  same way the scripts do (mirrors the fail-fast check above, not a bare
+  `jq -r` that could silently pass an empty `--model`):
   ```
-  CODER_MODEL=$(jq -r '.coder.id' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/models.json")
+  CODER_MODEL=$(jq -er '.coder.id' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/models.json") \
+    || { echo "error: could not read .coder.id from models.json"; exit 2; }
   cursor-agent -p --force --trust --model "$CODER_MODEL" "Reply with the single word READY."
   ```
+  (`jq -e` makes `jq` itself exit non-zero on `null`/missing, which trips the
+  `||`.)
 - **`commands/cursor-review.md`** healthcheck probe: same pattern reading
   `.reviewer.id`.
 
@@ -245,7 +263,11 @@ untouched — HTML comments, invisible when rendered):
 <!-- model:coder:label -->Composer 2.5<!-- /model:coder:label -->
 ```
 The script replaces only the text strictly between a matching marker pair.
-Applied to every remaining body-prose mention found in the grep:
+**Only mentions that name a specific versioned model are marked** — generic
+unversioned references to "Composer" or "Cursor" as a product/vendor name
+are left as plain prose, not wrapped, to avoid over-marking every incidental
+mention. Applied to every remaining versioned-model mention found in the
+grep:
 - **`README.md`**: intro paragraph (2 spots), subagents table ("Delegates
   to" column, 2 spots), usage section heading text.
 - **`agents/cursor-coder-delegator.md`** / **`agents/cursor-reviewer-delegator.md`**:
@@ -256,13 +278,18 @@ Applied to every remaining body-prose mention found in the grep:
   the body prose naming the model (outside the healthcheck probe line, which
   is already dynamic per the Runtime consumers section above).
 - **`scripts/cc-delegate.sh`** / **`scripts/cr-delegate.sh`**: the header
-  comment line (e.g. `# cc-delegate.sh — delegate one task to Cursor
-  <!-- model:coder:label -->Composer 2.5<!-- /model:coder:label --> and
-  verify.`).
-- **`tests/e2e-smoke.md`**: the comment line and any prose mention (the
-  probe command itself stays a literal example command, not synced, since
-  it's illustrative documentation of a manual check, not something executed
-  by tooling).
+  comment line. **Markers must stay entirely within the `#`-comment line**
+  (never span onto a following code line) since these are executable bash
+  files, not Markdown — an HTML comment marker landing outside a `#` line
+  would be interpreted as a shell command. Single-line example:
+  `# cc-delegate.sh — delegate one task to Cursor <!-- model:coder:label -->Composer 2.5<!-- /model:coder:label --> and verify.`
+- **`tests/e2e-smoke.md`**: the comment line's label mention, **and** the
+  probe command's model id (e.g.
+  `` `cursor-agent ... --model <!-- model:reviewer:id -->cursor-grok-4.5-high-fast<!-- /model:reviewer:id --> ...` ``)
+  — this is a runbook a human copy-pastes and runs manually, but the id
+  itself is still a real functional value that must not drift, so it's
+  synced like everything else rather than carved out as an exception to the
+  Goals.
 
 ### Drift check
 
@@ -273,9 +300,19 @@ exits non-zero (and prints which files would change) if anything is stale.
 that marker pair is missing entirely, `--check` fails loudly** rather than
 silently skipping the file — a missing marker means someone removed it or it
 was never added, either of which needs a human to notice, not a silent
-no-op. This is what `make release` calls before releasing. Running
-`scripts/sync-models.sh` with no flag performs the regeneration for real, so
-the normal workflow after editing `models.json` is:
+no-op. This is what `make release` calls before releasing.
+
+**Atomicity:** `sync-models.sh` (no flag) writes each target file to a temp
+path first and only replaces the real file once that file's regeneration
+succeeds — so a mid-run failure (e.g. an invalid label caught by the
+charset check above, partway through the file list) leaves already-written
+files updated and unwritten ones untouched, and the script exits non-zero
+printing exactly which files it did and didn't reach, so a re-run after
+fixing the cause is safe (regeneration is idempotent per-file: re-writing an
+already-correct file is a no-op diff).
+
+Running `scripts/sync-models.sh` with no flag performs the regeneration for
+real, so the normal workflow after editing `models.json` is:
 
 ```
 $EDITOR .claude-plugin/models.json
@@ -285,18 +322,30 @@ git diff   # review
 
 ## Revision log
 
-- 2026-07-18: revised after independent review (Grok 4.5 via
+- 2026-07-18 (round 1): revised after independent review (Grok 4.5 via
   `/cursor-review spec`, backend lens, session `732efd68-22ed-4880-9f1b-22fa18475a00`).
   Widened doc-sync coverage to close the Goals-vs-Part-2 gap, made changelog
   generation idempotent, fixed silent-failure risk in the scripts, specified
   commit-parsing rules, empty-bucket behavior, and split the plugin/marketplace
-  description templates instead of unifying them. See inline changes below.
+  description templates instead of unifying them.
+- 2026-07-18 (round 2): revised after re-review of round 1 (same session).
+  Replaced the skip-if-exists changelog guard with replace-in-place (the
+  skip variant could ship a stale section on retry), narrowed the "safe to
+  re-run" claim to exclude post-commit `git push` failure, synced the
+  `tests/e2e-smoke.md` probe's model id (not just its comment) to close the
+  last Goals exception, added fail-fast to the command healthcheck `jq`
+  calls, constrained markers to single comment lines in script headers,
+  fixed the Rollout/Doc-consumers contradiction over who edits `keywords`,
+  added a label charset constraint, and specified `sync-models.sh`
+  per-file write atomicity.
 
 ## Testing
 
 - Extend `tests/` with a shell test for `gen-changelog.sh`: given a fixed
   fake git history (feat/fix/docs commits after a `release:` marker), asserts
-  the generated section buckets correctly and omits empty sections.
+  the generated section buckets correctly and omits empty sections; a
+  separate case with zero qualifying commits since the boundary asserts the
+  `_No notable changes._` fallback.
 - New test for `sync-models.sh`: given a sample `models.json`, asserts every
   templated field (`plugin.json` / `marketplace.json` descriptions, all four
   frontmatter `description:` fields) and every marker span (README, agent
@@ -313,9 +362,13 @@ git diff   # review
   override var at a missing/invalid file and assert the script exits
   non-zero with the diagnostic message rather than invoking `cursor-agent`
   with an empty `--model`.
-- New test for `gen-changelog.sh` idempotency: run `make release` twice in a
-  row against a scratch clone (simulating a retry) and assert `CHANGELOG.md`
-  ends up with exactly one `## [X.Y.Z]` section, not two.
+- New test for the replace-in-place guard: in a scratch clone, manually
+  write a stale/incorrect `## [X.Y.Z]` section into `CHANGELOG.md` for the
+  version currently in `plugin.json` (simulating a commit that failed after
+  changelog generation but before `git commit` succeeded), then run
+  `make release` and assert the stale section is replaced with a freshly
+  generated one (not duplicated, not left stale) reflecting all commits up
+  to the new `HEAD`.
 - Manual: bump a version, run `make release` against a scratch clone, confirm
   `CHANGELOG.md` gets the right section and the release commit includes it.
 
@@ -330,12 +383,16 @@ As part of implementing this spec (not deferred):
    `tests/e2e-smoke.md` (one-time bootstrap — `sync-models.sh` only fills
    markers in, it doesn't insert new ones into arbitrary prose).
 3. Run `sync-models.sh` once to populate every marker and regenerate every
-   templated field — this also fixes the stale `"gpt-5.5"` keyword (manual
-   one-time edit per the Doc consumers section) and the stale "GPT-5.5"
-   wording in `marketplace.json`'s description (via its own template).
-4. Update the four runtime consumers (two scripts, two healthcheck probes)
+   templated field — this fixes the stale "GPT-5.5" wording in
+   `marketplace.json`'s description (via its own template) and every other
+   templated/marked spot.
+4. Separately, by hand, drop the stale `"gpt-5.5"` entry from
+   `.claude-plugin/plugin.json`'s `keywords` (this field is never touched by
+   `sync-models.sh`, per Doc consumers above — it's a one-time manual fix,
+   not something sync performs).
+5. Update the four runtime consumers (two scripts, two healthcheck probes)
    to read from config.
-5. Review the full `git diff` before committing — this is the one time
+6. Review the full `git diff` before committing — this is the one time
    every affected file changes at once.
 
 `CHANGELOG.md` starts empty (created fresh) at the next release.
