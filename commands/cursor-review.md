@@ -19,7 +19,7 @@ point: the model that authored the document must not be the one that grades it.
 2. **cursor-agent healthy? Probe for real** — `cursor-agent status` is NOT enough. Run
    an actual read-only headless probe:
    ```
-   REVIEWER_MODEL=$(jq -er '.reviewer.id' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/models.json")
+   REVIEWER_MODEL=$(jq -er '.reviewer.id // empty' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/models.json")
    if [[ -z "$REVIEWER_MODEL" ]]; then
      echo "error: could not read .reviewer.id from models.json"; exit 2
    fi

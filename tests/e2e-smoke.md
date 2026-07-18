@@ -55,7 +55,7 @@ rm -rf "$tmp"
 
 Prereqs: `cursor-agent login` done; the probe below returns `READY`:
 ```bash
-REVIEWER_MODEL=$(jq -er '.reviewer.id' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/models.json")
+REVIEWER_MODEL=$(jq -er '.reviewer.id // empty' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/models.json")
 if [[ -z "$REVIEWER_MODEL" ]]; then
   echo "error: could not read .reviewer.id from models.json"; exit 2
 fi

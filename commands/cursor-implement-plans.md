@@ -17,7 +17,7 @@ review. Composer writes code; you never let it review.
    calls still fail auth, and it does not catch the workspace-trust gate. Run an
    actual headless probe instead:
    ```
-   CODER_MODEL=$(jq -er '.coder.id' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/models.json")
+   CODER_MODEL=$(jq -er '.coder.id // empty' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/models.json")
    if [[ -z "$CODER_MODEL" ]]; then
      echo "error: could not read .coder.id from models.json"; exit 2
    fi
