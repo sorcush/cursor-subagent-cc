@@ -1,7 +1,7 @@
 {
   "name": "cursor-subagent-cc",
   "description": "Delegate implementation to Cursor's Composer 2.5 and independent design-spec/plan review to Grok 4.5 (high effort, fast) via cursor-agent, while Claude/Opus plans, decides, and reviews.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": {
     "name": "Andrey Sloutsman"
   },
